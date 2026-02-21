@@ -129,7 +129,8 @@ function main() {
   }
 
   // Unchanged: in both
-  const unchangedCount = [...headMap.keys()].filter((fp) => baselineMap.has(fp)).length;
+  const unchangedViolations = [...headMap.entries()].filter(([fp]) => baselineMap.has(fp)).map(([, v]) => v);
+  const unchangedCount = unchangedViolations.length;
 
   const baselineCounts = countByImpact(baselineMap);
   const headCounts = countByImpact(headMap);
@@ -151,6 +152,7 @@ function main() {
     },
     newViolations,
     resolvedViolations,
+    unchangedViolations,
   };
 
   fs.writeFileSync(outputFile, JSON.stringify(diff, null, 2));
