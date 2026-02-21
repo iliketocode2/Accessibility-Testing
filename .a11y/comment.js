@@ -1,48 +1,31 @@
 /**
  * comment.js
  * Reads diff.json and posts a formatted markdown comment to the GitHub PR.
- * Also sets a failed check status if regressions exist.
+ * Fails the check if regressions exist and FAIL_ON_REGRESSION is "true".
  *
  * Usage:
- *   node .a11y/comment.js --diff diff.json
+ *   node comment.js --diff diff.json
  *
- * Requires env vars:
- *   GITHUB_TOKEN   — automatically provided by GitHub Actions
- *   PR_NUMBER      — set in workflow from github.event.pull_request.number
- *   GITHUB_REPOSITORY — automatically provided (e.g. "owner/repo")
+ * Required env vars (automatically set by action.yml):
+ *   GITHUB_TOKEN
+ *   PR_NUMBER
+ *   GITHUB_REPOSITORY
+ *   FAIL_ON_REGRESSION  ("true" | "false")
  */
 
-const fs = require('fs');
+'use strict';
+
+const fs    = require('fs');
 const https = require('https');
-const path = require('path');
+const minimist = require('minimist');
 
-// Resolve modules from my-app/node_modules if NODE_PATH doesn't work
-const resolveModule = (moduleName) => {
-  try {
-    return require(moduleName);
-  } catch (e) {
-    // Try to find in my-app/node_modules (works from root or pr-branch)
-    const possiblePaths = [
-      path.join(__dirname, '..', 'my-app', 'node_modules', moduleName),
-      path.join(process.cwd(), 'my-app', 'node_modules', moduleName),
-    ];
-    for (const modulePath of possiblePaths) {
-      if (fs.existsSync(modulePath)) {
-        return require(modulePath);
-      }
-    }
-    throw e;
-  }
-};
-
-const minimist = resolveModule('minimist');
-
-const args = minimist(process.argv.slice(2));
+const args   = minimist(process.argv.slice(2));
 const diffFile = args.diff || 'diff.json';
 
-const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
-const PR_NUMBER = process.env.PR_NUMBER;
-const GITHUB_REPOSITORY = process.env.GITHUB_REPOSITORY;
+const GITHUB_TOKEN       = process.env.GITHUB_TOKEN;
+const PR_NUMBER          = process.env.PR_NUMBER;
+const GITHUB_REPOSITORY  = process.env.GITHUB_REPOSITORY;
+const FAIL_ON_REGRESSION = process.env.FAIL_ON_REGRESSION !== 'false';
 
 if (!GITHUB_TOKEN || !PR_NUMBER || !GITHUB_REPOSITORY) {
   console.error('Missing required env vars: GITHUB_TOKEN, PR_NUMBER, GITHUB_REPOSITORY');
@@ -51,112 +34,65 @@ if (!GITHUB_TOKEN || !PR_NUMBER || !GITHUB_REPOSITORY) {
 
 const [owner, repo] = GITHUB_REPOSITORY.split('/');
 
-// ─── Impact level helpers ────────────────────────────────────────────────────
+// ─── Constants ────────────────────────────────────────────────────────────────
 
 const IMPACT_EMOJI = {
   critical: '🔴',
-  serious: '🟠',
+  serious:  '🟠',
   moderate: '🟡',
-  minor: '🔵',
+  minor:    '🔵',
 };
 
-const WCAG_TAG_LABELS = {
-  'wcag2a': 'WCAG 2.0 A',
-  'wcag2aa': 'WCAG 2.0 AA',
-  'wcag21aa': 'WCAG 2.1 AA',
-  'wcag22aa': 'WCAG 2.2 AA',
-  'best-practice': 'Best Practice',
+// Human-readable labels and direct WCAG reference URLs
+const WCAG_TAGS = {
+  'wcag2a':        { label: 'WCAG 2.0 A',    url: 'https://www.w3.org/TR/WCAG20/' },
+  'wcag2aa':       { label: 'WCAG 2.0 AA',   url: 'https://www.w3.org/TR/WCAG20/' },
+  'wcag21a':       { label: 'WCAG 2.1 A',    url: 'https://www.w3.org/TR/WCAG21/' },
+  'wcag21aa':      { label: 'WCAG 2.1 AA',   url: 'https://www.w3.org/TR/WCAG21/' },
+  'wcag22aa':      { label: 'WCAG 2.2 AA',   url: 'https://www.w3.org/TR/WCAG22/' },
+  'best-practice': { label: 'Best Practice', url: 'https://dequeuniversity.com/rules/axe/' },
 };
 
-function wcagLabel(tags) {
+// Actionable fix hints per axe rule ID — shown inline in the detail block
+const FIX_HINTS = {
+  'color-contrast':              'Increase the contrast ratio between the text and its background to at least 4.5:1 (3:1 for large text). Use a contrast checker at https://webaim.org/resources/contrastchecker/',
+  'image-alt':                   'Add a descriptive `alt` attribute to the `<img>` element. Use `alt=""` for decorative images.',
+  'button-name':                 'Give the button an accessible name via visible text content, `aria-label`, or `aria-labelledby`.',
+  'link-name':                   'Give the link an accessible name via visible text, `aria-label`, or `aria-labelledby`. Avoid "click here" or "read more".',
+  'label':                       'Associate a `<label>` element with this form input using a matching `for`/`id` pair, or use `aria-label`.',
+  'input-button-name':           'Add a `value` attribute or `aria-label` to give this input button an accessible name.',
+  'aria-required-attr':          'Add the required ARIA attribute(s) listed in the violation. Check the ARIA spec for this role.',
+  'aria-roles':                  'Correct the invalid ARIA role. Refer to https://developer.mozilla.org/en-US/docs/Web/Accessibility/ARIA/Roles',
+  'aria-hidden-focus':           'Remove `aria-hidden="true"` from an element that contains focusable children, or remove the focusable elements from inside it.',
+  'aria-hidden-body':            'Remove `aria-hidden="true"` from the `<body>` element.',
+  'duplicate-id-active':         'Ensure all `id` values used in ARIA or label references are unique on the page.',
+  'duplicate-id-aria':           'Ensure all `id` values referenced by `aria-labelledby` or `aria-describedby` are unique.',
+  'frame-title':                 'Add a `title` attribute to the `<iframe>` describing its content.',
+  'heading-order':               'Ensure heading levels increase by only one at a time (e.g. h1 → h2, not h1 → h3).',
+  'html-has-lang':               'Add a `lang` attribute to the `<html>` element (e.g. `<html lang="en">`).',
+  'html-lang-valid':             'Ensure the `lang` attribute on `<html>` is a valid BCP 47 language tag.',
+  'landmark-one-main':           'Ensure the page has exactly one `<main>` landmark element.',
+  'meta-viewport':               'Remove `user-scalable=no` or `maximum-scale` restrictions from the viewport meta tag.',
+  'nested-interactive':          'Do not nest interactive elements (e.g. a button inside a link). Each must be independently focusable.',
+  'select-name':                 'Add a `<label>` or `aria-label` to associate an accessible name with this `<select>` element.',
+  'skip-link':                   'Add a visible skip link as the first focusable element on the page to let keyboard users skip navigation.',
+  'svg-img-alt':                 'Add `role="img"` and a `<title>` element (or `aria-label`) to SVGs that convey meaning.',
+  'td-headers-attr':             'Ensure all `headers` attributes on `<td>` elements reference valid `<th>` `id` values.',
+  'th-has-data-cells':           'Ensure each `<th>` has associated data cells, or use `scope` to define the relationship.',
+  'video-caption':               'Add captions to the `<video>` element using a `<track kind="captions">` element.',
+};
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function wcagInfo(tags) {
   for (const tag of (tags || [])) {
-    if (WCAG_TAG_LABELS[tag]) return WCAG_TAG_LABELS[tag];
+    if (WCAG_TAGS[tag]) return WCAG_TAGS[tag];
   }
-  return '—';
+  return { label: '—', url: null };
 }
 
 function impactBadge(impact) {
-  return `${IMPACT_EMOJI[impact] || '⚪'} ${impact}`;
-}
-
-// ─── Markdown builder ────────────────────────────────────────────────────────
-
-function buildComment(diff) {
-  const { summary, newViolations, resolvedViolations, impactDelta, regression } = diff;
-
-  const statusHeader = regression
-    ? `## ♿ Accessibility Check — ❌ Regressions Found`
-    : `## ♿ Accessibility Check — ✅ No Regressions`;
-
-  const summaryTable = `
-| | Baseline | This PR | Delta |
-|---|---|---|---|
-| Total violations | ${summary.baselineTotal} | ${summary.headTotal} | ${summary.headTotal - summary.baselineTotal >= 0 ? '+' : ''}${summary.headTotal - summary.baselineTotal} |
-| 🔴 Critical | ${impactDelta.baseline.critical || 0} | ${impactDelta.head.critical || 0} | ${delta(impactDelta.baseline.critical, impactDelta.head.critical)} |
-| 🟠 Serious | ${impactDelta.baseline.serious || 0} | ${impactDelta.head.serious || 0} | ${delta(impactDelta.baseline.serious, impactDelta.head.serious)} |
-| 🟡 Moderate | ${impactDelta.baseline.moderate || 0} | ${impactDelta.head.moderate || 0} | ${delta(impactDelta.baseline.moderate, impactDelta.head.moderate)} |
-| 🔵 Minor | ${impactDelta.baseline.minor || 0} | ${impactDelta.head.minor || 0} | ${delta(impactDelta.baseline.minor, impactDelta.head.minor)} |
-`;
-
-  let newSection = '';
-  if (newViolations.length > 0) {
-    const rows = newViolations
-      .map((v) => {
-        const selector = v.target.join(' > ');
-        const truncatedHtml = v.html.length > 80 ? v.html.slice(0, 80) + '…' : v.html;
-        return `| ${impactBadge(v.impact)} | \`${v.id}\` | ${wcagLabel(v.tags)} | \`${v.urlPath}\` | \`${selector}\` | [docs](${v.helpUrl}) |`;
-      })
-      .join('\n');
-
-    newSection = `
-### 🚨 New Violations (${newViolations.length})
-
-These were introduced by this PR and must be fixed before merging.
-
-| Impact | Rule | WCAG | Page | Selector | Docs |
-|--------|------|------|------|----------|------|
-${rows}
-
-<details>
-<summary>View full details</summary>
-
-${newViolations
-  .map(
-    (v) => `**\`${v.id}\`** on \`${v.urlPath}\`
-- **Impact**: ${impactBadge(v.impact)}
-- **WCAG**: ${wcagLabel(v.tags)}
-- **Element**: \`${v.target.join(' > ')}\`
-- **HTML**: \`${v.html.slice(0, 120)}\`
-- **Issue**: ${v.failureSummary}
-- **Docs**: ${v.helpUrl}
-`
-  )
-  .join('\n---\n')}
-</details>
-`;
-  }
-
-  let resolvedSection = '';
-  if (resolvedViolations.length > 0) {
-    resolvedSection = `
-### ✅ Resolved Violations (${resolvedViolations.length})
-
-Great work — this PR fixed the following issues:
-
-${resolvedViolations
-  .map((v) => `- ${impactBadge(v.impact)} \`${v.id}\` on \`${v.urlPath}\` — [docs](${v.helpUrl})`)
-  .join('\n')}
-`;
-  }
-
-  const footer = `
----
-<sub>Generated by a11y-diff · ${diff.generatedAt}</sub>
-`;
-
-  return [statusHeader, summaryTable, newSection, resolvedSection, footer]
-    .filter(Boolean)
-    .join('\n');
+  return `${IMPACT_EMOJI[impact] || '⚪'} **${impact}**`;
 }
 
 function delta(a, b) {
@@ -165,32 +101,206 @@ function delta(a, b) {
   return n > 0 ? `+${n} ⬆️` : `${n} ⬇️`;
 }
 
-// ─── GitHub API helpers ──────────────────────────────────────────────────────
+function escapeHtml(str) {
+  return (str || '').replace(/`/g, "'");
+}
 
-function githubRequest(method, path, body) {
+function truncate(str, max) {
+  if (!str) return '';
+  return str.length > max ? str.slice(0, max) + '…' : str;
+}
+
+// ─── Detailed violation block ─────────────────────────────────────────────────
+
+function buildViolationDetail(v, index) {
+  const wcag   = wcagInfo(v.tags);
+  const hint   = FIX_HINTS[v.id] || null;
+  const wcagLink = wcag.url ? `[${wcag.label}](${wcag.url})` : wcag.label;
+
+  // Each violation can have multiple failing nodes (multiple elements on the page)
+  const nodeBlocks = (v.nodes || [v]).map((node, i) => {
+    const selector = (node.target || []).join(' > ');
+    const html     = escapeHtml(truncate(node.html, 300));
+    const summary  = (node.failureSummary || '')
+      .replace(/^Fix (any|all) of the following:\s*/i, '')
+      .trim();
+
+    // Format each individual fix suggestion as its own bullet
+    const fixLines = summary
+      .split('\n')
+      .map(l => l.trim())
+      .filter(Boolean)
+      .map(l => `  - ${l}`)
+      .join('\n');
+
+    return `**Failing element ${v.nodes && v.nodes.length > 1 ? `${i + 1} of ${v.nodes.length}` : ''}**
+
+| Field | Value |
+|-------|-------|
+| Selector | \`${selector}\` |
+| HTML | \`${html}\` |
+
+**What to fix:**
+${fixLines || '  - See documentation link below.'}
+`;
+  }).join('\n---\n');
+
+  return `<details>
+<summary>${IMPACT_EMOJI[v.impact] || '⚪'} <strong>${v.id}</strong> — ${v.description} &nbsp;|&nbsp; ${wcag.label} &nbsp;|&nbsp; <code>${v.urlPath}</code></summary>
+
+### Rule: \`${v.id}\`
+
+| | |
+|---|---|
+| **Impact** | ${impactBadge(v.impact)} |
+| **Standard** | ${wcagLink} |
+| **Page** | \`${v.urlPath}\` |
+| **Rule docs** | [View on Deque University](${v.helpUrl}) |
+${hint ? `| **Fix guidance** | ${hint} |` : ''}
+
+### Failing elements
+
+${nodeBlocks}
+
+</details>`;
+}
+
+// ─── Full comment builder ─────────────────────────────────────────────────────
+
+function buildComment(diff) {
+  const { summary, newViolations, resolvedViolations, unchangedViolations, impactDelta, regression } = diff;
+
+  const statusHeader = regression
+    ? `## Accessibility Check — Regressions Found`
+    : `## Accessibility Check — No Regressions`;
+
+  const existingCount = (unchangedViolations || []).length;
+  const statusLine = regression
+    ? `> **This PR introduced ${summary.newViolations} new accessibility violation(s).** Review the details below and resolve them before merging.`
+    : existingCount > 0
+      ? `> No new violations were introduced. However, **${existingCount} pre-existing violation(s)** remain on this branch — they are not blocking this PR but are worth addressing over time.`
+      : `> No accessibility violations were introduced by this PR.`;
+
+  const summaryTable = `
+| | Baseline | This PR | Delta |
+|---|:---:|:---:|:---:|
+| Total violations | ${summary.baselineTotal} | ${summary.headTotal} | ${summary.headTotal - summary.baselineTotal >= 0 ? '+' : ''}${summary.headTotal - summary.baselineTotal} |
+| 🔴 Critical | ${impactDelta.baseline.critical || 0} | ${impactDelta.head.critical || 0} | ${delta(impactDelta.baseline.critical, impactDelta.head.critical)} |
+| 🟠 Serious  | ${impactDelta.baseline.serious  || 0} | ${impactDelta.head.serious  || 0} | ${delta(impactDelta.baseline.serious,  impactDelta.head.serious)}  |
+| 🟡 Moderate | ${impactDelta.baseline.moderate || 0} | ${impactDelta.head.moderate || 0} | ${delta(impactDelta.baseline.moderate, impactDelta.head.moderate)} |
+| 🔵 Minor    | ${impactDelta.baseline.minor    || 0} | ${impactDelta.head.minor    || 0} | ${delta(impactDelta.baseline.minor,    impactDelta.head.minor)}    |
+| ✅ Resolved  | — | — | -${summary.resolvedViolations} |
+`;
+
+  // ── New violations ──────────────────────────────────────────────────────────
+  let newSection = '';
+  if (newViolations.length > 0) {
+    // Quick-reference table at the top
+    const quickRows = newViolations.map((v) => {
+      const selector = (v.target || []).join(' > ');
+      const wcag     = wcagInfo(v.tags);
+      const wcagCell = wcag.url ? `[${wcag.label}](${wcag.url})` : wcag.label;
+      return `| ${IMPACT_EMOJI[v.impact] || '⚪'} ${v.impact} | \`${v.id}\` | ${wcagCell} | \`${v.urlPath}\` | \`${truncate(selector, 60)}\` | [Docs](${v.helpUrl}) |`;
+    }).join('\n');
+
+    // Detailed expandable block per violation
+    const detailBlocks = newViolations.map((v, i) => buildViolationDetail(v, i)).join('\n\n');
+
+    newSection = `
+### New Violations (${newViolations.length})
+
+These violations were **not present on the base branch** and were introduced by this PR.
+
+| Impact | Rule | Standard | Page | Selector | Docs |
+|--------|------|----------|------|----------|------|
+${quickRows}
+
+---
+
+### Detailed Breakdown
+
+${detailBlocks}
+`;
+  }
+
+  // ── Resolved violations ─────────────────────────────────────────────────────
+  let resolvedSection = '';
+  if (resolvedViolations.length > 0) {
+    const rows = resolvedViolations.map((v) => {
+      const wcag = wcagInfo(v.tags);
+      const wcagCell = wcag.url ? `[${wcag.label}](${wcag.url})` : wcag.label;
+      return `| ${IMPACT_EMOJI[v.impact] || '⚪'} ${v.impact} | \`${v.id}\` | ${wcagCell} | \`${v.urlPath}\` | [Docs](${v.helpUrl}) |`;
+    }).join('\n');
+
+    resolvedSection = `
+### Resolved Violations (${resolvedViolations.length})
+
+This PR fixed the following accessibility issues:
+
+| Impact | Rule | Standard | Page | Docs |
+|--------|------|----------|------|------|
+${rows}
+`;
+  }
+
+  // ── Existing (unchanged) violations ────────────────────────────────────────
+  let existingSection = '';
+  const existing = unchangedViolations || [];
+  if (existing.length > 0 && !regression) {
+    const detailBlocks = existing.map((v, i) => buildViolationDetail(v, i)).join('\n\n');
+
+    existingSection = `
+---
+
+### Pre-existing Violations (${existing.length})
+
+These violations existed before this PR and are **not caused by this change**. They are shown here for visibility and are not blocking the merge.
+
+${detailBlocks}
+`;
+  }
+
+  // ── Report-only note ────────────────────────────────────────────────────────
+  const modeNote = (!FAIL_ON_REGRESSION && regression)
+    ? `\n> **Report-only mode** — regressions were found but the check was not failed.\n`
+    : '';
+
+  const footer = `
+---
+<sub>Generated by [a11y-diff](https://github.com/your-org/a11y-diff-action) · ${diff.generatedAt} · <a href="https://dequeuniversity.com/rules/axe/">axe rules reference</a></sub>
+`;
+
+  return [statusHeader, statusLine, modeNote, summaryTable, newSection, resolvedSection, existingSection, footer]
+    .filter(Boolean)
+    .join('\n');
+}
+
+// ─── GitHub API ───────────────────────────────────────────────────────────────
+
+function githubRequest(method, urlPath, body) {
   return new Promise((resolve, reject) => {
     const data = body ? JSON.stringify(body) : null;
     const options = {
       hostname: 'api.github.com',
-      path,
+      path:     urlPath,
       method,
       headers: {
-        Authorization: `token ${GITHUB_TOKEN}`,
+        Authorization:  `token ${GITHUB_TOKEN}`,
         'Content-Type': 'application/json',
-        'User-Agent': 'a11y-diff-action',
-        Accept: 'application/vnd.github.v3+json',
+        'User-Agent':   'a11y-diff-action',
+        Accept:         'application/vnd.github.v3+json',
         ...(data ? { 'Content-Length': Buffer.byteLength(data) } : {}),
       },
     };
 
     const req = https.request(options, (res) => {
-      let responseData = '';
-      res.on('data', (chunk) => (responseData += chunk));
+      let buf = '';
+      res.on('data', (chunk) => (buf += chunk));
       res.on('end', () => {
         if (res.statusCode >= 200 && res.statusCode < 300) {
-          resolve(JSON.parse(responseData || '{}'));
+          resolve(JSON.parse(buf || '{}'));
         } else {
-          reject(new Error(`GitHub API ${res.statusCode}: ${responseData}`));
+          reject(new Error(`GitHub API ${res.statusCode}: ${buf}`));
         }
       });
     });
@@ -202,47 +312,33 @@ function githubRequest(method, path, body) {
 }
 
 async function deleteExistingComments() {
-  // Find and delete any previous a11y-diff comments to avoid cluttering the PR
-  const comments = await githubRequest(
-    'GET',
-    `/repos/${owner}/${repo}/issues/${PR_NUMBER}/comments`
-  );
-
+  const comments = await githubRequest('GET', `/repos/${owner}/${repo}/issues/${PR_NUMBER}/comments`);
   for (const comment of comments) {
-    if (comment.body && comment.body.includes('♿ Accessibility Check')) {
-      await githubRequest(
-        'DELETE',
-        `/repos/${owner}/${repo}/issues/comments/${comment.id}`
-      );
+    if (comment.body && comment.body.includes('Accessibility Check')) {
+      await githubRequest('DELETE', `/repos/${owner}/${repo}/issues/comments/${comment.id}`);
       console.log(`  Deleted previous a11y comment ${comment.id}`);
     }
   }
 }
 
-async function postComment(body) {
-  return githubRequest('POST', `/repos/${owner}/${repo}/issues/${PR_NUMBER}/comments`, {
-    body,
-  });
-}
-
-// ─── Main ────────────────────────────────────────────────────────────────────
+// ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main() {
-  console.log('\n💬 a11y-diff comment posting');
-  console.log(`   diff file  : ${diffFile}`);
-  console.log(`   repository : ${GITHUB_REPOSITORY}`);
-  console.log(`   PR number  : ${PR_NUMBER}\n`);
+  console.log('\na11y-diff posting comment');
+  console.log(`   diff file         : ${diffFile}`);
+  console.log(`   repository        : ${GITHUB_REPOSITORY}`);
+  console.log(`   PR number         : ${PR_NUMBER}`);
+  console.log(`   fail on regression: ${FAIL_ON_REGRESSION}\n`);
 
   const diff = JSON.parse(fs.readFileSync(diffFile, 'utf8'));
-  const commentBody = buildComment(diff);
+  const body = buildComment(diff);
 
   await deleteExistingComments();
-  const posted = await postComment(commentBody);
-  console.log(`✅ Comment posted: ${posted.html_url}`);
+  const posted = await githubRequest('POST', `/repos/${owner}/${repo}/issues/${PR_NUMBER}/comments`, { body });
+  console.log(`Comment posted: ${posted.html_url}`);
 
-  // Exit 1 if regression so the workflow step fails
-  if (diff.regression) {
-    console.error(`\n❌ Failing check due to ${diff.summary.newViolations} accessibility regression(s).`);
+  if (diff.regression && FAIL_ON_REGRESSION) {
+    console.error(`\nFailing check — ${diff.summary.newViolations} accessibility regression(s).`);
     process.exit(1);
   }
 
@@ -250,6 +346,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error('\n💥 Fatal comment error:', err.message);
+  console.error('\nFatal comment error:', err.message);
   process.exit(1);
 });
