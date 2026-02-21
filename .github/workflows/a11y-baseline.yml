@@ -28,19 +28,24 @@ jobs:
         with:
           node-version: 20
           cache: 'npm'
+          cache-dependency-path: my-app/package-lock.json
 
       # ── 3. Install & build ───────────────────────────────────────────────────
       - name: Install dependencies
+        working-directory: my-app
         run: npm ci
 
       - name: Install Playwright browsers
+        working-directory: my-app
         run: npx playwright install chromium --with-deps
 
       - name: Build
+        working-directory: my-app
         run: npm run build
 
       # ── 4. Serve & scan ──────────────────────────────────────────────────────
       - name: Serve build
+        working-directory: my-app
         run: npx serve dist -l 3000 &
 
       - name: Wait for server

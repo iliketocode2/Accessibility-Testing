@@ -36,7 +36,7 @@ jobs:
         with:
           node-version: 20
           cache: 'npm'
-          cache-dependency-path: pr-branch/package-lock.json
+          cache-dependency-path: pr-branch/my-app/package-lock.json
 
       # ── 4. Install dependencies ──────────────────────────────────────────────
       # We only need to install once (in pr-branch) because:
@@ -44,40 +44,40 @@ jobs:
       #   - We're serving main-branch's BUILD OUTPUT, not running its node_modules
       #   - Playwright only needs to be installed once on the runner
       - name: Install dependencies (PR branch)
-        working-directory: pr-branch
+        working-directory: pr-branch/my-app
         run: npm ci
 
       # Install Playwright browser binaries — only needed once per runner.
       # --with-deps installs OS-level dependencies (fonts, libs) required in CI.
       - name: Install Playwright browsers
-        working-directory: pr-branch
+        working-directory: pr-branch/my-app
         run: npx playwright install chromium --with-deps
 
       # ── 5. Install dependencies for main branch build ───────────────────────
       # We need main-branch's own node_modules to build it correctly.
       # We do NOT install Playwright here — the build tools are enough.
       - name: Install dependencies (main branch — build only)
-        working-directory: main-branch
+        working-directory: main-branch/my-app
         run: npm ci
 
       # ── 6. Build both branches ───────────────────────────────────────────────
       - name: Build PR branch
-        working-directory: pr-branch
+        working-directory: pr-branch/my-app
         run: npm run build
 
       - name: Build main branch
-        working-directory: main-branch
+        working-directory: main-branch/my-app
         run: npm run build
 
       # ── 7. Serve both builds on different ports ──────────────────────────────
       # We use npx serve (static file server) — adjust if your app needs SSR.
       # The & runs it in the background so the step doesn't block.
       - name: Serve main branch on port 4000
-        working-directory: main-branch
+        working-directory: main-branch/my-app
         run: npx serve dist -l 4000 &
 
       - name: Serve PR branch on port 5000
-        working-directory: pr-branch
+        working-directory: pr-branch/my-app
         run: npx serve dist -l 5000 &
 
       # ── 8. Wait for both servers to be ready ────────────────────────────────
