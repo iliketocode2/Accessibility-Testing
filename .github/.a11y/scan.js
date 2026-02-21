@@ -7,31 +7,11 @@
  *   node .a11y/scan.js --baseUrl http://localhost:3000 --output baseline.json
  */
 
+const { chromium } = require('playwright');
+const { AxeBuilder } = require('@axe-core/playwright');
 const fs = require('fs');
 const path = require('path');
-
-// Resolve modules from my-app/node_modules if NODE_PATH doesn't work
-const resolveModule = (moduleName) => {
-  try {
-    return require(moduleName);
-  } catch (e) {
-    // Try to find in my-app/node_modules (works from root or pr-branch)
-    const possiblePaths = [
-      path.join(__dirname, '..', 'my-app', 'node_modules', moduleName),
-      path.join(process.cwd(), 'my-app', 'node_modules', moduleName),
-    ];
-    for (const modulePath of possiblePaths) {
-      if (fs.existsSync(modulePath)) {
-        return require(modulePath);
-      }
-    }
-    throw e;
-  }
-};
-
-const { chromium } = resolveModule('playwright');
-const { AxeBuilder } = resolveModule('@axe-core/playwright');
-const minimist = resolveModule('minimist');
+const minimist = require('minimist');
 
 const args = minimist(process.argv.slice(2));
 const baseUrl = (args.baseUrl || 'http://localhost:3000').replace(/\/$/, '');

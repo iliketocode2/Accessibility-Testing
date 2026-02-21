@@ -28,25 +28,56 @@ jobs:
         with:
           node-version: 20
           cache: 'npm'
+          cache-dependency-path: my-app/package-lock.json
 
       # ── 3. Install & build ───────────────────────────────────────────────────
       - name: Install dependencies
+        working-directory: my-app
         run: npm ci
 
       - name: Install Playwright browsers
+        working-directory: my-app
         run: npx playwright install chromium --with-deps
 
       - name: Build
+        working-directory: my-app
         run: npm run build
 
-      # ── 4. Serve & scan ──────────────────────────────────────────────────────
-      - name: Serve build
-        run: npx serve dist -l 3000 &
+      # ── 3.5. Verify build created output directory ───────────────────────────
+      - name: Verify build output
+        working-directory: my-app
+        run: |
+          if [ ! -d "out" ]; then
+            echo "ERROR: out directory does not exist!"
+            echo "Build may have failed or Next.js is not configured for static export"
+            ls -la || true
+            exit 1
+          fi
+          echo "Build output directory exists ✓"
 
-      - name: Wait for server
-        run: npx wait-on http://localhost:3000 --timeout 30000
+      # ── 4. Serve & scan ──────────────────────────────────────────────────────
+      - name: Serve build and wait
+        working-directory: my-app
+        run: |
+          echo "Checking build output..."
+          ls -la out || (echo "out directory not found!" && exit 1)
+          
+          echo "Starting server..."
+          npx serve out -l 3000 > /tmp/serve.log 2>&1 &
+          SERVE_PID=$!
+          echo "Started server (PID: $SERVE_PID)"
+          
+          # Give server a moment to start
+          sleep 2
+          
+          # Wait for server to be ready
+          npx wait-on http://localhost:3000 --timeout 30000 || (echo "Server failed to start" && cat /tmp/serve.log && exit 1)
+          
+          echo "Server is ready!"
 
       - name: Scan main branch
+        env:
+          NODE_PATH: ${{ github.workspace }}/my-app/node_modules
         run: node .a11y/scan.js --baseUrl http://localhost:3000 --output .a11y/baseline.json
 
       # ── 5. Commit updated baseline back to repo ──────────────────────────────
