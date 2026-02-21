@@ -53,6 +53,28 @@ jobs:
         working-directory: pr-branch/my-app
         run: npx playwright install chromium --with-deps
 
+      # ── 5.5. Ensure main branch uses static export config ───────────────────
+      # Write the static export config to main branch BEFORE installing
+      # dependencies to ensure the config is in place for the build.
+      # This allows the workflow to work even if main branch hasn't been updated yet.
+      - name: Update main branch config for static export
+        working-directory: main-branch/my-app
+        run: |
+          echo "Writing static export config to main branch..."
+          cat > next.config.ts << 'EOF'
+          import type { NextConfig } from "next";
+
+          const nextConfig: NextConfig = {
+            output: 'export',
+          };
+
+          export default nextConfig;
+          EOF
+          echo "✓ Updated main branch next.config.ts with static export config"
+          echo ""
+          echo "Verifying config..."
+          cat next.config.ts
+
       # ── 5. Install dependencies for main branch build ───────────────────────
       # We need main-branch's own node_modules to build it correctly.
       # We do NOT install Playwright here — the build tools are enough.
@@ -61,13 +83,29 @@ jobs:
         run: npm ci
 
       # ── 6. Build both branches ───────────────────────────────────────────────
-      - name: Build PR branch
+      - name: Clean and build PR branch
         working-directory: pr-branch/my-app
-        run: npm run build
+        run: |
+          rm -rf .next out
+          npm run build
 
-      - name: Build main branch
+      - name: Clean and build main branch
         working-directory: main-branch/my-app
-        run: npm run build
+        run: |
+          rm -rf .next out
+          npm run build
+
+      # ── 6.3. Debug: Check what Next.js actually created ────────────────────
+      - name: Debug build outputs
+        run: |
+          echo "=== PR Branch Build Output ==="
+          ls -la pr-branch/my-app/ | grep -E "(out|\.next)" || echo "No out or .next found"
+          echo ""
+          echo "=== Main Branch Build Output ==="
+          ls -la main-branch/my-app/ | grep -E "(out|\.next)" || echo "No out or .next found"
+          echo ""
+          echo "=== Main Branch Config Check ==="
+          cat main-branch/my-app/next.config.ts || echo "Config file not found"
 
       # ── 6.5. Verify builds created output directories ────────────────────────
       - name: Verify build outputs
