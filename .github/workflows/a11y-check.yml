@@ -134,22 +134,24 @@ jobs:
           ls -la pr-branch/my-app/out || echo "PR branch out directory not found"
           
           echo "Starting servers..."
-          cd main-branch/my-app && npx serve out -l 4000 > /tmp/serve-4000.log 2>&1 &
+          # Start main branch server
+          (cd main-branch/my-app && npx serve out -l 4000 > /tmp/serve-4000.log 2>&1) &
           SERVE_4000_PID=$!
           echo "Started main branch server (PID: $SERVE_4000_PID)"
           
-          cd ../../pr-branch/my-app && npx serve out -l 5000 > /tmp/serve-5000.log 2>&1 &
+          # Start PR branch server
+          (cd pr-branch/my-app && npx serve out -l 5000 > /tmp/serve-5000.log 2>&1) &
           SERVE_5000_PID=$!
           echo "Started PR branch server (PID: $SERVE_5000_PID)"
           
           # Give servers a moment to start
-          sleep 2
+          sleep 3
           
           # Check if processes are still running
           ps aux | grep serve || echo "No serve processes found"
           
-          # Wait for both servers to be ready
-          cd ../../pr-branch/my-app
+          # Wait for both servers to be ready (using wait-on from PR branch)
+          cd pr-branch/my-app
           npx wait-on http://localhost:4000 --timeout 30000 || (echo "Port 4000 failed" && cat /tmp/serve-4000.log && exit 1)
           npx wait-on http://localhost:5000 --timeout 30000 || (echo "Port 5000 failed" && cat /tmp/serve-5000.log && exit 1)
           
