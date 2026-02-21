@@ -69,23 +69,53 @@ jobs:
         working-directory: main-branch/my-app
         run: npm run build
 
-      # ── 7. Serve both builds on different ports ──────────────────────────────
-      # We use npx serve (static file server) — adjust if your app needs SSR.
-      # The & runs it in the background so the step doesn't block.
-      - name: Serve main branch on port 4000
-        working-directory: main-branch/my-app
-        run: npx serve out -l 4000 &
-
-      - name: Serve PR branch on port 5000
-        working-directory: pr-branch/my-app
-        run: npx serve out -l 5000 &
-
-      # ── 8. Wait for both servers to be ready ────────────────────────────────
-      - name: Wait for servers
-        working-directory: pr-branch/my-app
+      # ── 6.5. Verify builds created output directories ────────────────────────
+      - name: Verify build outputs
         run: |
-          npx wait-on http://localhost:4000 --timeout 30000
-          npx wait-on http://localhost:5000 --timeout 30000
+          echo "Checking PR branch build output..."
+          if [ ! -d "pr-branch/my-app/out" ]; then
+            echo "ERROR: pr-branch/my-app/out directory does not exist!"
+            echo "Build may have failed or Next.js is not configured for static export"
+            ls -la pr-branch/my-app/ || true
+            exit 1
+          fi
+          echo "Checking main branch build output..."
+          if [ ! -d "main-branch/my-app/out" ]; then
+            echo "ERROR: main-branch/my-app/out directory does not exist!"
+            echo "Build may have failed or Next.js is not configured for static export"
+            ls -la main-branch/my-app/ || true
+            exit 1
+          fi
+          echo "Both builds have output directories ✓"
+
+      # ── 7. Verify builds and serve both on different ports ───────────────────
+      - name: Verify builds and start servers
+        run: |
+          echo "Checking build outputs..."
+          ls -la main-branch/my-app/out || echo "Main branch out directory not found"
+          ls -la pr-branch/my-app/out || echo "PR branch out directory not found"
+          
+          echo "Starting servers..."
+          cd main-branch/my-app && npx serve out -l 4000 > /tmp/serve-4000.log 2>&1 &
+          SERVE_4000_PID=$!
+          echo "Started main branch server (PID: $SERVE_4000_PID)"
+          
+          cd ../../pr-branch/my-app && npx serve out -l 5000 > /tmp/serve-5000.log 2>&1 &
+          SERVE_5000_PID=$!
+          echo "Started PR branch server (PID: $SERVE_5000_PID)"
+          
+          # Give servers a moment to start
+          sleep 2
+          
+          # Check if processes are still running
+          ps aux | grep serve || echo "No serve processes found"
+          
+          # Wait for both servers to be ready
+          cd ../../pr-branch/my-app
+          npx wait-on http://localhost:4000 --timeout 30000 || (echo "Port 4000 failed" && cat /tmp/serve-4000.log && exit 1)
+          npx wait-on http://localhost:5000 --timeout 30000 || (echo "Port 5000 failed" && cat /tmp/serve-5000.log && exit 1)
+          
+          echo "Both servers are ready!"
 
       # ── 9. Run axe scan on main (baseline) ──────────────────────────────────
       - name: Scan main branch (baseline)
