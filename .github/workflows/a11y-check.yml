@@ -160,11 +160,15 @@ jobs:
       # ── 9. Run axe scan on main (baseline) ──────────────────────────────────
       - name: Scan main branch (baseline)
         working-directory: pr-branch
+        env:
+          NODE_PATH: ${{ github.workspace }}/pr-branch/my-app/node_modules
         run: node .a11y/scan.js --baseUrl http://localhost:4000 --output baseline.json
 
       # ── 10. Run axe scan on PR branch ───────────────────────────────────────
       - name: Scan PR branch
         working-directory: pr-branch
+        env:
+          NODE_PATH: ${{ github.workspace }}/pr-branch/my-app/node_modules
         run: node .a11y/scan.js --baseUrl http://localhost:5000 --output pr.json
 
       # ── 11. Diff the two scan results ───────────────────────────────────────

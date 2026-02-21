@@ -76,6 +76,8 @@ jobs:
           echo "Server is ready!"
 
       - name: Scan main branch
+        env:
+          NODE_PATH: ${{ github.workspace }}/my-app/node_modules
         run: node .a11y/scan.js --baseUrl http://localhost:3000 --output .a11y/baseline.json
 
       # ── 5. Commit updated baseline back to repo ──────────────────────────────
