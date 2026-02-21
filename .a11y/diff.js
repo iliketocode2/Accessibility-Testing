@@ -12,7 +12,28 @@
  */
 
 const fs = require('fs');
-const minimist = require('minimist');
+const path = require('path');
+
+// Resolve modules from my-app/node_modules if NODE_PATH doesn't work
+const resolveModule = (moduleName) => {
+  try {
+    return require(moduleName);
+  } catch (e) {
+    // Try to find in my-app/node_modules (works from root or pr-branch)
+    const possiblePaths = [
+      path.join(__dirname, '..', 'my-app', 'node_modules', moduleName),
+      path.join(process.cwd(), 'my-app', 'node_modules', moduleName),
+    ];
+    for (const modulePath of possiblePaths) {
+      if (fs.existsSync(modulePath)) {
+        return require(modulePath);
+      }
+    }
+    throw e;
+  }
+};
+
+const minimist = resolveModule('minimist');
 
 const args = minimist(process.argv.slice(2));
 const baselineFile = args.baseline;
