@@ -9,12 +9,13 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@axe-core/playwright": "^4.9.0",
+    "ci": "^2.3.0",
+    "minimist": "^1.2.8",
     "next": "16.1.6",
+    "playwright": "^1.42.0",
     "react": "19.2.3",
     "react-dom": "19.2.3",
-    "@axe-core/playwright": "^4.9.0",
-    "minimist": "^1.2.8",
-    "playwright": "^1.42.0",
     "serve": "^14.2.0",
     "wait-on": "^7.0.1"
   },
