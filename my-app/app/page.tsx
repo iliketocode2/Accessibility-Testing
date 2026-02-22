@@ -17,6 +17,18 @@ export default function Home() {
           priority
         />
 
+        {/* ❌ 2. image-alt: empty alt on meaningful image */}
+        <Image
+          className="dark:invert"
+          src="/next.svg"
+          alt=""
+          width={100}
+          height={100}
+          priority
+        />
+
+
+
         <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
           {/* ❌ 3. heading-order: skips from h1 to h4 */}
           <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
@@ -25,6 +37,10 @@ export default function Home() {
           <h4 className="text-sm text-zinc-400">
             Subheading that skips levels
           </h4>
+
+          <button>HI</button>
+
+          <h1 style={{ color: "white", fontSize: "1px" }}>Hello</h1>
 
           <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
             Looking for a starting point or more instructions? Head over to{" "}
