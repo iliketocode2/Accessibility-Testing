@@ -1,0 +1,13 @@
+{
+  "name": "a11y-diff-action",
+  "version": "1.0.0",
+  "description": "GitHub Action for detecting accessibility regressions",
+  "private": true,
+  "dependencies": {
+    "@axe-core/playwright": "^4.9.0",
+    "minimist": "^1.2.8",
+    "playwright": "^1.42.0",
+    "serve": "^14.2.0",
+    "wait-on": "^7.0.1"
+  }
+}
