@@ -38,7 +38,7 @@ export default function Home() {
             Subheading that skips levels
           </h4>
 
-          <button></button>
+          <button>HI</button>
 
           <h1 style={{ color: "white", fontSize: "1px" }}>Hello</h1>
 
