@@ -10,7 +10,7 @@ jobs:
       contents: read
       pull-requests: write
     steps:
-      - uses: zachkklein/WCAG_PR_Checker@main
+      - uses: zachkklein/WCAG_PR_Checker@llm_added
         with:
           APP_DIR: 'my-app'
           BUILD_DIR: 'my-app/dist'
